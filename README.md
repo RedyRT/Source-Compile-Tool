@@ -2,7 +2,7 @@
 	<img
 		alt="source_compile_tool_logo_light"
 		src="https://github.com/user-attachments/assets/c5528911-9515-45ca-92ab-5eaf250ac796"
-		width="400"
+		width="800"
 	/>
 </p>
 
