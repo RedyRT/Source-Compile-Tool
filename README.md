@@ -1,4 +1,10 @@
-<img width="1258" height="145" alt="source_compile_tool_logo_light" src="https://github.com/user-attachments/assets/c5528911-9515-45ca-92ab-5eaf250ac796" />
+<p align="center">
+	<img
+		alt="source_compile_tool_logo_light"
+		src="https://github.com/user-attachments/assets/c5528911-9515-45ca-92ab-5eaf250ac796"
+		width="400"
+	/>
+</p>
 
 # Source Compile Tool
 
