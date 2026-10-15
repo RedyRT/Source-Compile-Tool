@@ -2,7 +2,7 @@
 
 # Source Compile Tool
 
-A graphical tool based on CompilePal++ for batch compiling Source Engine maps. Built with Python and PySide6, it brings map compilation and related processing tasks into one interface.
+A graphical tool based on CompilePalX for batch compiling Source Engine maps. Built with Python and PySide6, it brings map compilation and related processing tasks into one interface.
 
 ## Features
 
