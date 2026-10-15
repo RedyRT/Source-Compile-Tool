@@ -1,0 +1,4 @@
+PySide6
+QtAwesome
+pyqtdarktheme
+pyinstaller
