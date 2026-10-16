@@ -65,4 +65,4 @@ Configuration files can be edited manually while the application is closed. Back
 
 ## Parameter compatibility
 
-Parameter files use a format based on CompilePal++. Format compatibility does not guarantee that every parameter, game, or Source SDK version is supported. Use tools and flags appropriate for your game.
+Parameter files use a format based on CompilePalX. Format compatibility does not guarantee that every parameter, game, or Source SDK version is supported. Use tools and flags appropriate for your game.
