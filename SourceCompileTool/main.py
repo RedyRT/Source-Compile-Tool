@@ -31,6 +31,7 @@ import io
 import json
 import locale
 import logging
+import math
 import os
 import re
 import shutil
@@ -52,7 +53,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QAction, QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QIcon,
-    QDragMoveEvent, QImage, QPainter, QPalette, QPixmap, QTextCharFormat, QTextCursor,
+    QDragMoveEvent, QImage, QPainter, QPalette, QPixmap, QRadialGradient,
+    QPen, QTextCharFormat, QTextCursor,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog, QFileDialog,
@@ -3500,6 +3502,11 @@ COMPILE_HINTS: List[CompileHint] = [
        "A brush entity contains a displacement; displacements are only allowed in the world.",
        "Find the brush entity that has a displacement and remove the displacement, or move that "
        "brush back to the world (Ctrl+T 'Tie to World')."),
+    _h("nodraw_displacement", "VBSP", "NODRAW on displacement surface",
+       r"NODRAW on displacement surface",
+       "A displacement uses the NODRAW material, which prevents its surface from rendering correctly.",
+       "In Hammer, find the displacement face by its face ID and replace NODRAW with a visible material "
+       "suitable for the surface. Use NODRAW only on hidden brush faces, not displacement surfaces.", "W"),
     _h("displacement_physics", "VBSP", "Cannot compile displacement physics",
        r"Can't compile displacement physics",
        "The collision (physics) data for a displacement could not be built, usually because a "
@@ -3528,6 +3535,12 @@ COMPILE_HINTS: List[CompileHint] = [
        "A model-based entity (prop_*) has no model set.",
        "Use Hammer's Entity Report to find entities whose 'model' key is empty (or has a placeholder "
        "value) and set a model or delete the entity."),
+    _h("dynamic_prop_info_lighting", "VBSP", "Dynamic prop uses info_lighting",
+       r"Entity ['\"]prop_dynamic(?:_override)?['\"].*specifies info_lighting",
+       "A prop_dynamic or prop_dynamic_override specifies an info_lighting entity. The info_lighting "
+       "key is intended for prop_static and does not provide lighting for dynamic props.",
+       "Remove the info_lighting key from the dynamic prop. If it needs a lighting origin, use a "
+       "supported dynamic lighting setup for the game; reserve info_lighting for prop_static.", "W"),
     _h("static_prop_needs_flag", "VBSP", "Model cannot be a prop_static",
        r"must be compiled with \$staticprop|which must be used on a dynamic entity",
        "A prop_static uses a model that was not compiled with $staticprop (typically a physics/"
@@ -4220,6 +4233,74 @@ class ProcessConfigView(QObject):
         finally:
             self._proc_list.blockSignals(False)
 
+    def set_active_stage(self, kind: Optional[str], frame: int = 0) -> None:
+        """Animate the icon for the compiler stage currently running."""
+        active = kind.lower() if kind else None
+        procs = self._current.processes if self._current else []
+        self._proc_list.blockSignals(True)
+        try:
+            for row in range(self._proc_list.count()):
+                item = self._proc_list.item(row)
+                idx = item.data(Qt.ItemDataRole.UserRole)
+                if not isinstance(idx, int) or not 0 <= idx < len(procs):
+                    continue
+                proc = procs[idx]
+                stage = proc.kind.name.lower()
+                icon = self._stage_icon(proc)
+                if stage == active and stage in {"vbsp", "vvis", "vrad"}:
+                    size = 24
+                    # Render animation frames at higher resolution so Qt can
+                    # downsample them cleanly to the list's 20 px icon size.
+                    dpr = 4.0
+                    pixel_size = int(size * dpr)
+                    source = icon.pixmap(pixel_size, pixel_size)
+                    canvas = QPixmap(pixel_size, pixel_size)
+                    canvas.setDevicePixelRatio(dpr)
+                    canvas.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(canvas)
+                    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    if stage == "vbsp":
+                        painter.translate(size / 2, size / 2)
+                        painter.rotate((frame * 12) % 360)
+                        painter.drawPixmap(-size / 2, -size / 2, size, size, source)
+                    elif stage == "vvis":
+                        # Preserve the eye outline, then move the large iris as one shape.
+                        painter.drawPixmap(0, 0, size, size, source)
+                        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(Qt.GlobalColor.transparent)
+                        # Clear the full original iris, including its antialiased edge.
+                        painter.drawEllipse(7, 7, 10, 10)
+                        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+                        iris_x = size / 2 + math.sin(frame * 0.28) * 2.6
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(QColor(_ICON_FG["color"]))
+                        painter.drawEllipse(int(iris_x - 3), 9, 6, 6)
+                    else:
+                        # Fade a warm glow in and out, with rays appearing as it lights up.
+                        glow = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(frame * 0.32))
+                        gradient = QRadialGradient(size / 2, size / 2, 11)
+                        gradient.setColorAt(0.0, QColor(255, 190, 70, int(115 * glow)))
+                        gradient.setColorAt(1.0, QColor(255, 190, 70, 0))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(gradient)
+                        painter.drawEllipse(1, 1, size - 2, size - 2)
+                        painter.drawPixmap(0, 0, size, size, source)
+                        painter.setPen(QPen(QColor(255, 205, 105, int(220 * glow)), 1.4))
+                        for angle in range(0, 360, 45):
+                            painter.save()
+                            painter.translate(size / 2, size / 2)
+                            painter.rotate(angle)
+                            painter.drawLine(0, -10, 0, -12)
+                            painter.restore()
+                    painter.end()
+                    item.setIcon(QIcon(canvas))
+                else:
+                    item.setIcon(icon)
+        finally:
+            self._proc_list.blockSignals(False)
+
     def _reload_processes(self, select: Optional[ProcessConfig] = None) -> None:
         select = select or self._selected_proc()
         procs = self._current.processes if self._current else []
@@ -4897,6 +4978,11 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._tick)
+        self._stage_anim_timer = QTimer(self)
+        self._stage_anim_timer.setInterval(90)
+        self._stage_anim_timer.timeout.connect(self._animate_stage_icon)
+        self._stage_anim_kind: Optional[str] = None
+        self._stage_anim_frame = 0
         self._t0: Optional[float] = None
         self.statusBar().showMessage("Ready")
 
@@ -4980,6 +5066,9 @@ class MainWindow(QMainWindow):
         self._log_view.clear()
         self._progress.setValue(0)
         self._t0 = time.time()
+        self._stage_anim_kind = None
+        self._stage_anim_frame = 0
+        self._stage_anim_timer.start()
         self._timer.start()
         self._act_compile.setEnabled(False)
         self._act_cancel.setEnabled(True)
@@ -4988,6 +5077,9 @@ class MainWindow(QMainWindow):
 
     def _finish_ui(self) -> None:
         self._timer.stop()
+        self._stage_anim_timer.stop()
+        self._stage_anim_kind = None
+        self._proc_view.set_active_stage(None)
         self._act_compile.setEnabled(True)
         self._act_cancel.setEnabled(False)
 
@@ -5004,6 +5096,16 @@ class MainWindow(QMainWindow):
     def _on_step_start(self, name: str) -> None:
         self._step_lbl.setText(name)
         self.statusBar().showMessage(name)
+        stage_name = name.split(" — ", 1)[0].split(" – ", 1)[0].strip().lower()
+        self._stage_anim_kind = stage_name if stage_name in {"vbsp", "vvis", "vrad"} else None
+        self._stage_anim_frame = 0
+        self._proc_view.set_active_stage(self._stage_anim_kind)
+
+    def _animate_stage_icon(self) -> None:
+        if self._stage_anim_kind is None:
+            return
+        self._stage_anim_frame += 1
+        self._proc_view.set_active_stage(self._stage_anim_kind, self._stage_anim_frame)
 
     def _on_done_ok(self, elapsed: float) -> None:
         self._finish_ui()
