@@ -6,7 +6,7 @@ datas = []
 
 # Configuration and default parameter files are created by the app at runtime.
 # Bundle only the window icon as a data file; the executable icon is set below.
-for relative_path in ("icon.ico",):
+for relative_path in ("icon.ico", "half life icons PNG/PNG images"):
     source = project_dir / relative_path
     if source.is_dir():
         for file_path in source.rglob("*"):

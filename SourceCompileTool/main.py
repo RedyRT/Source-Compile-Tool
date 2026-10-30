@@ -256,6 +256,34 @@ _NEUTRAL: List[Tuple[Any, str]] = []
 _ICON_CACHE: Dict[Tuple[str, str], QIcon] = {}
 
 
+_GAME_ICON_BY_APPID = {
+    220: "Half-Life 2.png",
+    240: "Counter Strike Source.png",
+    280: "Half-Life Source.png",
+    300: "Day Of Defeat Source.png",
+    320: "Half-Life 2 Deathmatch.png",
+    340: "Half-Life 2 lost coast.png",
+    380: "Half-Life 2 episode 1.png",
+    400: "Portal.png",
+    420: "Half-Life 2 episode 2.png",
+    440: "Team Fortress 2.png",
+    500: "Left 4 Dead.png",
+    550: "Left 4 Dead 2.png",
+    570: "DOTA 2.png",
+    620: "Portal 2.png",
+    730: "Counter Strike Global Offensive.png",
+    4000: "Garrys Mod.png",
+    362890: "Black Mesa.png",
+}
+
+
+def game_icon(appid: Optional[int]) -> QIcon:
+    """Return the icon associated with a Steam AppID, if one is available."""
+    filename = _GAME_ICON_BY_APPID.get(appid) if appid is not None else None
+    path = _GAME_ICON_DIR / filename if filename else None
+    return QIcon(str(path)) if path and path.is_file() else QIcon()
+
+
 def qicon(key: str, color: Optional[str] = None) -> QIcon:
     """Build (and cache) a qtawesome icon. qta.icon() is slow, so every
     (key, color) pair is only rendered once — switching themes back and forth
@@ -308,6 +336,7 @@ def rgba(color: str, alpha: int) -> str:
 # SECTION 3 — PATHS, CONFIG & LOGGING
 # =============================================================================
 SCRIPT_DIR: Path = Path(__file__).resolve().parent
+_GAME_ICON_DIR = SCRIPT_DIR / "half life icons PNG" / "PNG images"
 CONFIG_DIR: Path = SCRIPT_DIR / "config"
 LOGS_DIR: Path = SCRIPT_DIR / "logs"
 PARAMETERS_DIR: Path = CONFIG_DIR / "parameters"
@@ -2130,7 +2159,53 @@ class GameDiscoveryController(QObject):
         return roots
 
     @staticmethod
-    def _find_gameinfos(folder: Path) -> List[Tuple[Path, Path]]:
+    def _dedupe_gameinfos(found: List[Tuple[Path, Path]]) -> List[Tuple[Path, Path]]:
+        """Keep one primary game folder when siblings share a Steam AppID."""
+        by_appid: Dict[int, List[Tuple[Path, Path]]] = {}
+        without_appid: List[Tuple[Path, Path]] = []
+        for game_dir, info in found:
+            try:
+                text = info.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                without_appid.append((game_dir, info))
+                continue
+            match = re.search(r'"?SteamAppId"?\s+"?(\d+)"?', text, re.IGNORECASE)
+            if not match:
+                without_appid.append((game_dir, info))
+                continue
+            by_appid.setdefault(int(match.group(1)), []).append((game_dir, info))
+
+        def preference(candidate: Tuple[Path, Path]) -> Tuple[int, int, str]:
+            name = candidate[0].name.lower()
+            auxiliary = bool(re.search(
+                r"(?:^|[_ -])(?:complete|dlc\d*|update|content|maps?)(?:$|[_ -])", name))
+            return (int(auxiliary), len(name), name)
+
+        # DLC and update folders often have their own gameinfo.txt and may use
+        # a different SteamAppId. Ignore them when their base game is present.
+        candidates = [item for group in by_appid.values() for item in group]
+        candidates.extend(without_appid)
+        names = {item[0].name.lower() for item in candidates}
+        auxiliary_paths = set()
+        for game_dir, _info in candidates:
+            name = game_dir.name.lower()
+            base = re.sub(r"_(?:dlc\d*|complete|update)$", "", name)
+            if base != name and base in names:
+                auxiliary_paths.add(game_dir)
+            elif name == "update" and any(
+                    other != name and not re.search(r"_(?:dlc\d*|complete|update)$", other)
+                    for other in names):
+                auxiliary_paths.add(game_dir)
+
+        kept = [item for item in without_appid if item[0] not in auxiliary_paths]
+        for group in by_appid.values():
+            primary = [item for item in group if item[0] not in auxiliary_paths]
+            if primary:
+                kept.append(min(primary, key=preference))
+        return sorted(kept, key=lambda item: str(item[0]).lower())
+
+    @classmethod
+    def _find_gameinfos(cls, folder: Path) -> List[Tuple[Path, Path]]:
         direct = folder / "gameinfo.txt"
         if direct.is_file():
             return [(folder, direct)]
@@ -2142,7 +2217,7 @@ class GameDiscoveryController(QObject):
                     found.append((sub, info))
         except OSError:
             pass
-        return found
+        return cls._dedupe_gameinfos(found)
 
     @classmethod
     def _find_gameinfos_deep(cls, folder: Path, depth: int) -> List[Tuple[Path, Path]]:
@@ -2159,7 +2234,7 @@ class GameDiscoveryController(QObject):
             return out
         for child in children:
             out.extend(cls._find_gameinfos_deep(child, depth - 1))
-        return out
+        return cls._dedupe_gameinfos(out)
 
     @classmethod
     def _scan_custom(cls, root: Path, games: List[GameConfig], seen: set) -> None:
@@ -2235,7 +2310,7 @@ class GameDiscoveryController(QObject):
             text = gameinfo.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             return None
-        m = re.search(r'"SteamAppId"\s+"(\d+)"', text, re.IGNORECASE)
+        m = re.search(r'"?SteamAppId"?\s+"?(\d+)"?', text, re.IGNORECASE)
         cfg = GameConfig(name=game_dir.name, path=game_dir,
                          appid=int(m.group(1)) if m else None)
 
@@ -3916,8 +3991,11 @@ class GameSelectorView(QWidget):
         self._list.clear()
         for g in self._model.all_games():
             plus = g.tools_plus_plus
-            item = QListWidgetItem(qicon("tools_plus" if plus else "game",
-                                         "#ffa657" if plus else "#58a6ff"), g.name)
+            icon = game_icon(g.appid)
+            if icon.isNull():
+                icon = qicon("tools_plus" if plus else "game",
+                             "#ffa657" if plus else "#58a6ff")
+            item = QListWidgetItem(icon, g.name)
             tip = f"Path: {g.path}"
             if g.appid:
                 tip += f"\nAppID: {g.appid}"
@@ -4263,7 +4341,7 @@ class ProcessConfigView(QObject):
                     if stage == "vbsp":
                         painter.translate(size / 2, size / 2)
                         painter.rotate((frame * 12) % 360)
-                        painter.drawPixmap(-size / 2, -size / 2, size, size, source)
+                        painter.drawPixmap(-(size // 2), -(size // 2), size, size, source)
                     elif stage == "vvis":
                         # Preserve the eye outline, then move the large iris as one shape.
                         painter.drawPixmap(0, 0, size, size, source)
