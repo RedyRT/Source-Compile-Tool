@@ -6,6 +6,8 @@
 	/>
 </p>
 
+<img width="2558" height="1513" alt="image" src="https://github.com/user-attachments/assets/982185ba-6c8a-4a59-b0c5-f9dfec16672e" />
+
 # Source Compile Tool
 
 A graphical tool based on CompilePalX for batch compiling Source Engine maps. Built with Python and PySide6, it brings map compilation and related processing tasks into one interface.
